@@ -28,7 +28,7 @@ class NBeatsInterpretable(nn.Module):
         bcst_len,
         fcst_len,
         num_trend_block_units=256,
-        num_seasonal_block_units=1024,
+        num_seasonal_block_units=2048,
         trend_degree=2,
         num_blocks_per_stack=3,
         num_seasonal_terms=None,
