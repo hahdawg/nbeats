@@ -5,11 +5,11 @@ import nbeats.model as nbm
 
 
 class ModelTester(unittest.TestCase):
-    batch_size = 1024
+    batch_size = 126
     device = "cpu"
     bcst_len = 32
     fcst_len = 16
-    num_units = 128
+    num_units = 8
 
     def test_nbeats_interpretable(self):
         nb = nbm.NBeatsInterpretable(
