@@ -142,7 +142,7 @@ def plot_output(x, y, y_hat, num_plots):
 
 def compute_log_loss(y, y_hat):
     """
-    Actually, l1 log loss.
+    l1 log loss.
 
     Parameters
     ----------
@@ -180,8 +180,8 @@ def train(data=None, interpretable=False):
             device=device,
             bcst_len=bcst_len,
             fcst_len=fcst_len,
-            num_seasonal_terms=5,
-            seasonal_period=12,
+            num_seasonal_terms=8,
+            seasonal_period=1,
         )
     else:
         model = NBeatsGeneric(
