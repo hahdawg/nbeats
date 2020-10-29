@@ -282,7 +282,7 @@ class Block(nn.Module):
         """
         Parameters
         ----------
-        x: Tensor(shape=[batch_size, bcst_len])
+        x: Tensor(shape=(batch_size, bcst_len))
 
         Returns
         -------
@@ -304,13 +304,13 @@ def trend_basis(theta, t, device):
 
     Parameters
     ----------
-    theta: Tensor(shape=[batch_size, theta_dim])
+    theta: Tensor(shape=(batch_size, theta_dim])
     t: Tensor(shape=[num_steps])
     device: str
 
     Returns
     -------
-    Tensor(shape=[batch_size, num_steps])
+    Tensor(shape=(batch_size, num_steps])
     """
     power = torch.arange(theta.shape[1])
     T = t**power.reshape(-1, 1)
@@ -321,7 +321,7 @@ def seasonal_basis(theta, t, num_terms, period, device):
     """
     Parameters
     ----------
-    theta: Tensor(shape=[batch_size, theta_dim])
+    theta: Tensor(shape=(batch_size, theta_dim))
     t: Tensor(shape=[num_steps])
     num_terms: int
         Number of (sin, cos) pairs.
@@ -331,7 +331,7 @@ def seasonal_basis(theta, t, num_terms, period, device):
 
     Returns
     -------
-    Tensor(shape=[batch_size, num_steps])
+    Tensor(shape=(batch_size, num_steps))
     """
     idx = (t/period)*(2*math.pi*torch.arange(0, num_terms).reshape(-1, 1))
     cos = torch.cos(idx)
@@ -377,7 +377,7 @@ class TrendBlock(Block):
         """
         Parameters
         ----------
-        x: Tensor(shape=[batch_size, bcst_len])
+        x: Tensor(shape=(batch_size, bcst_len))
 
         Returns
         -------
@@ -432,7 +432,7 @@ class SeasonalityBlock(Block):
         """
         Parameters
         ----------
-        x: Tensor(shape=[batch_size, bcst_len])
+        x: Tensor(shape=(batch_size, bcst_len))
 
         Returns
         -------
@@ -494,7 +494,7 @@ class GenericBlock(Block):
         """
         Parameters
         ----------
-        x: Tensor(shape=[batch_size, bcst_len])
+        x: Tensor(shape=(batch_size, bcst_len))
 
         Returns
         -------
@@ -505,55 +505,3 @@ class GenericBlock(Block):
         bcst = self.bcst_fc(torch.relu(theta_bcst))
         fcst = self.fcst_fc(torch.relu(theta_fcst))
         return bcst, fcst
-
-
-def test_seasonal_block():
-    bcst_len = 32
-    fcst_len = 64
-    batch_size = 8
-    sb = SeasonalityBlock(
-        device="cpu",
-        num_units=32,
-        bcst_len=bcst_len,
-        fcst_len=fcst_len,
-        period=1,
-        num_seasonal_terms=5
-    )
-    x = torch.zeros((batch_size, bcst_len))
-    bcst, fcst = sb(x)
-    assert bcst.shape == x.shape
-    assert fcst.shape == (batch_size, fcst_len)
-
-
-def test_trend_block():
-    bcst_len = 32
-    fcst_len = 64
-    batch_size = 8
-    tb = TrendBlock(
-        device="cpu",
-        num_units=32,
-        bcst_len=bcst_len,
-        fcst_len=fcst_len,
-        trend_degree=4
-    )
-    x = torch.zeros((batch_size, bcst_len))
-    bcst, fcst = tb(x)
-    assert bcst.shape == x.shape
-    assert fcst.shape == (batch_size, fcst_len)
-
-
-def test_generic_block():
-    bcst_len = 32
-    fcst_len = 64
-    batch_size = 8
-    gb = GenericBlock(
-        device="cpu",
-        num_units=32,
-        bcst_len=bcst_len,
-        fcst_len=fcst_len,
-        theta_dim=10
-    )
-    x = torch.zeros((batch_size, bcst_len))
-    bcst, fcst = gb(x)
-    assert bcst.shape == x.shape
-    assert fcst.shape == (batch_size, fcst_len)
