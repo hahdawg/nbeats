@@ -30,7 +30,6 @@ class NBeats(nn.Module):
             bcst, fcst = stack(x)
             x = x - bcst
             y = y + fcst
-        # return x, y
         return x, y + mean
 
 
