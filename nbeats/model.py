@@ -8,7 +8,33 @@ SEASONALITY_ID = "seasonality"
 GENERIC_ID = "generic"
 
 
-class NBeatsInterpretable(nn.Module):
+class NBeats(nn.Module):
+    """
+    Implement forward method.
+    """
+
+    def forward(self, x):
+        """
+        Parameters
+        ----------
+        x: Tensor(shape=(batch_size, bcst_len))
+
+        Returns
+        -------
+        bcst(shape=(batch_size, bcst_len)), fcst(shape=(batch_size, fcst_len))
+        """
+        y = 0.0
+        mean = x.mean(axis=1).reshape(-1, 1)
+        x = x - mean
+        for stack in self.stacks:
+            bcst, fcst = stack(x)
+            x = x - bcst
+            y = y + fcst
+        # return x, y
+        return x, y + mean
+
+
+class NBeatsInterpretable(NBeats):
     """
     Parameters
     ----------
@@ -71,25 +97,8 @@ class NBeatsInterpretable(nn.Module):
         self.stacks = nn.ModuleList([trend_stack, seasonal_stack])
         self.to(self.device)
 
-    def forward(self, x):
-        """
-        Parameters
-        ----------
-        x: Tensor(shape=(batch_size, bcst_len))
 
-        Returns
-        -------
-        bcst(shape=(batch_size, bcst_len)), fcst(shape=(batch_size, fcst_len))
-        """
-        y = 0.0
-        for stack in self.stacks:
-            bcst, fcst = stack(x)
-            x = x - bcst
-            y = y + fcst
-        return x, y
-
-
-class NBeatsGeneric(nn.Module):
+class NBeatsGeneric(NBeats):
     """
     Parameters
     ----------
@@ -130,24 +139,6 @@ class NBeatsGeneric(nn.Module):
                 **block_params
             ) for _ in range(num_stacks)
         ])
-
-    def forward(self, x):
-        """
-        Parameters
-        ----------
-        x: Tensor(shape=(batch_size, bcst_len))
-
-        Returns
-        -------
-        bcst: Tensor(shape=(batch_size, bcst_len))
-        fcst: Tensor(shape=(batch_size, fcst_len))
-        """
-        y = 0.0
-        for stack in self.stacks:
-            bcst, fcst = stack(x)
-            x = x - bcst
-            y = y + fcst
-        return x, y
 
 
 class Stack(nn.Module):
@@ -313,6 +304,7 @@ def trend_basis(theta, t, device):
     Tensor(shape=(batch_size, num_steps])
     """
     power = torch.arange(theta.shape[1])
+    # T.shape = (theta.shape[1], num_steps)
     T = t**power.reshape(-1, 1)
     return torch.matmul(theta, T.to(device))
 
