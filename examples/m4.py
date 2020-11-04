@@ -13,7 +13,7 @@ def load_data():
     """
     Load M4 monthly data from disk.
     """
-    res = pd.read_csv("/home/hahdawg/projects/nbeats/examples/data/m4_train.csv")
+    res = pd.read_csv("/home/hahdawg/projects/nbeats/examples/data/Monthly-train.csv")
     return res.values
 
 
@@ -82,11 +82,12 @@ def generate_batches(
         lvi_batch = last_valid_idx[idx_batch]
         fvi_batch = lvi_batch - fcst_len - offset - bcst_len
         time_batch = lvi_batch[0] - fvi_batch[0]
-        col_idx = fvi_batch.reshape(-1, 1) + np.arange(time_batch)
+        time_idx = fvi_batch.reshape(-1, 1) + np.arange(time_batch)
 
-        ts_batch = ts_batch[np.arange(ts_batch.shape[0]).reshape(-1, 1), col_idx]
+        ts_batch = ts_batch[np.arange(ts_batch.shape[0]).reshape(-1, 1), time_idx]
         nan_rows = np.isnan(ts_batch).any(axis=1)
         ts_batch = ts_batch[~nan_rows]
+        time_idx_batch = time_idx[~nan_rows]
 
         if not ts_batch.shape[0]:
             continue
@@ -108,7 +109,7 @@ def generate_batches(
             )
             if any_nan:
                 raise ValueError()
-        yield x_tr, x_val, y_tr, y_val, series_id_batch
+        yield x_tr, x_val, y_tr, y_val, series_id_batch, time_idx_batch
 
 
 
@@ -158,7 +159,9 @@ def compute_log_loss(y, y_hat):
 
 
 def train(data=None, interpretable=False):
-
+    """
+    Train nbeats on monthly m4 data.
+    """
     if data is None:
         data = load_data()
 
@@ -197,7 +200,7 @@ def train(data=None, interpretable=False):
     running_loss = deque(maxlen=checkpoint_freq)
     running_mape_tr = deque(maxlen=checkpoint_freq)
     running_mape_val = deque(maxlen=checkpoint_freq)
-    for i, (x_tr, x_val, y_tr, y_val, _) in enumerate(batch_generator):
+    for i, (x_tr, x_val, y_tr, y_val, _, _) in enumerate(batch_generator):
         x_tr = torch.from_numpy(x_tr).float().to(device)
         x_val = torch.from_numpy(x_val).float().to(device)
         y_tr = torch.from_numpy(y_tr).float().to(device)
