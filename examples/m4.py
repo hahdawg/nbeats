@@ -183,7 +183,7 @@ def train(data=None, interpretable=False):
             device=device,
             bcst_len=bcst_len,
             fcst_len=fcst_len,
-            num_seasonal_terms=8,
+            num_seasonal_terms=(fcst_len + bcst_len) // 2 - 1,
             seasonal_period=1,
         )
     else:
