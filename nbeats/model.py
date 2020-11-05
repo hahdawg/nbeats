@@ -134,7 +134,7 @@ class NBeatsGeneric(NBeats):
                 device=device,
                 block_type=GENERIC_ID,
                 num_blocks=num_blocks_per_stack,
-                share_weights=True,
+                share_weights=False,
                 **block_params
             ) for _ in range(num_stacks)
         ])
@@ -317,14 +317,15 @@ def seasonal_basis(theta, t, num_terms, period, device):
     num_terms: int
         Number of (sin, cos) pairs.
     period: int
-        Lowest frequency perod.
+        Lowest perod.
     device: str
 
     Returns
     -------
     Tensor(shape=(batch_size, num_steps))
     """
-    idx = (t/period)*(2*math.pi*torch.arange(0, num_terms).reshape(-1, 1))
+    frequencies = 2*math.pi*torch.arange(0, num_terms)/period
+    idx = t*(frequencies.reshape(-1, 1))
     cos = torch.cos(idx)
     sin = torch.sin(idx[1:])
     # S.shape = (2*num_terms - 1, num_steps])
