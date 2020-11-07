@@ -194,7 +194,7 @@ class Stack(nn.Module):
         return x, y
 
 
-def linspace(bcst_len, fcst_len):
+def linspace(bcst_len, fcst_len, normalize=True):
     """
     Centered linspace.
 
@@ -209,6 +209,8 @@ def linspace(bcst_len, fcst_len):
     t_fcst: Tensor(shape=bcst_len))
     """
     t = torch.linspace(-bcst_len, fcst_len, bcst_len + fcst_len)
+    if normalize:
+        t = t/t[-1]
     t_bcst = t[:bcst_len]
     t_fcst = t[bcst_len:]
     return t_bcst, t_fcst
@@ -232,7 +234,8 @@ class Block(nn.Module):
         theta_dim,
         bcst_len,
         fcst_len,
-        share_thetas
+        share_thetas,
+        num_layers=4
     ):
         super().__init__()
         self.device = device
@@ -241,10 +244,13 @@ class Block(nn.Module):
         self.bcst_len = bcst_len
         self.fcst_len = fcst_len
         self.share_thetas = share_thetas
-        self.fc1 = nn.Linear(in_features=self.bcst_len, out_features=num_units)
-        self.fc2 = nn.Linear(in_features=num_units, out_features=num_units)
-        self.fc3 = nn.Linear(in_features=num_units, out_features=num_units)
-        self.fc4 = nn.Linear(in_features=num_units, out_features=num_units)
+        self.num_layers = num_layers
+        self.layers = nn.ModuleList(
+            [nn.Linear(in_features=self.bcst_len, out_features=num_units)] + \
+            [nn.Linear(in_features=num_units, out_features=num_units)
+             for _ in range(self.num_layers - 1)
+            ]
+        )
 
         self.time_bcst, self.time_fcst = linspace(bcst_len, fcst_len)
 
@@ -279,10 +285,8 @@ class Block(nn.Module):
         theta_bcst: Tensor(shape=(batch_size, theta_dim))
         theta_fcst: Tensor(shape=(batch_size, theta_dim))
         """
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc4(x))
+        for layer in self.layers:
+            x = torch.relu(layer(x))
         theta_bcst = self.theta_bcst_fc(x)
         theta_fcst = self.theta_fcst_fc(x)
         return theta_bcst, theta_fcst
@@ -308,14 +312,13 @@ def trend_basis(theta, t, device):
     return torch.matmul(theta, T.to(device))
 
 
-def seasonal_basis(theta, t, num_terms, period, device):
+def seasonal_basis(theta, t, period, device):
     """
     Parameters
     ----------
     theta: Tensor(shape=(batch_size, theta_dim))
+        Note: theta_dim must be odd.
     t: Tensor(shape=[num_steps])
-    num_terms: int
-        Number of (sin, cos) pairs.
     period: int
         Lowest perod.
     device: str
@@ -324,13 +327,20 @@ def seasonal_basis(theta, t, num_terms, period, device):
     -------
     Tensor(shape=(batch_size, num_steps))
     """
-    frequencies = 2*math.pi*torch.arange(0, num_terms)/period
+    if theta.shape[1] % 2 == 0:
+        raise ValueError("theta.shape[1] must be odd.")
+
+    num_terms = (theta.shape[1] - 1) // 2
+
+    frequencies = 2*math.pi*torch.arange(1, num_terms + 1)/period
     idx = t*(frequencies.reshape(-1, 1))
+    constant = torch.ones(idx.shape[1]).reshape(1, -1)
     cos = torch.cos(idx)
-    sin = torch.sin(idx[1:])
+    sin = torch.sin(idx)
     # S.shape = (2*num_terms - 1, num_steps])
-    S = torch.cat((cos, sin), axis=0)
+    S = torch.cat((constant, cos, sin), axis=0)
     return torch.matmul(theta, S.to(device))
+
 
 class TrendBlock(Block):
     """
@@ -361,9 +371,6 @@ class TrendBlock(Block):
             share_thetas=share_thetas
         )
         self.to(self.device)
-        num_steps = bcst_len + fcst_len
-        self.time_bcst /= num_steps
-        self.time_fcst /= num_steps
 
     def forward(self, x):
         """
@@ -407,7 +414,8 @@ class SeasonalityBlock(Block):
     ):
         if not num_seasonal_terms:
             num_seasonal_terms = fcst_len // 2 - 1
-        theta_dim = 2*num_seasonal_terms - 1
+
+        theta_dim = 2*num_seasonal_terms + 1
         super().__init__(
             device=device,
             num_units=num_units,
@@ -435,14 +443,12 @@ class SeasonalityBlock(Block):
         bcst = seasonal_basis(
             theta=theta_bcst,
             t=self.time_bcst,
-            num_terms=self.num_seasonal_terms,
             period=self.period,
             device=self.device
         )
         fcst = seasonal_basis(
             theta=theta_fcst,
             t=self.time_fcst,
-            num_terms=self.num_seasonal_terms,
             period=self.period,
             device=self.device
         )
