@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+import torch.utils.data as td
 
 
 from nbeats.model import NBeatsInterpretable, NBeatsGeneric
@@ -44,7 +45,7 @@ def generate_batches(
     seed=42
 ):
     """
-    Batch generator.
+    Batch generator written in numpy.
 
     Parameters
     ----------
@@ -112,6 +113,107 @@ def generate_batches(
         yield x_tr, x_val, y_tr, y_val, series_id_batch, time_idx_batch
 
 
+class M4Dataset(td.Dataset):
+    """
+    Parameters
+    ----------
+    processed: (np.array,)
+        Result of process_data.
+    bcst_len: int
+    fcst_len: int
+    lh: float
+    istrain: bool
+    debug_mode: bool
+    """
+    def __init__(
+        self,
+        processed,
+        bcst_len,
+        fcst_len,
+        lh=1.5,
+        istrain=True,
+        debug_mode=True
+    ):
+        self.bcst_len = bcst_len
+        self.fcst_len = fcst_len
+        self.lh = lh
+        self.max_offset = int(self.lh*self.fcst_len)
+        self.istrain = istrain
+        self.debug_mode = debug_mode
+
+        self.ts, self.series_id, _, self.last_valid_idx = self._filter_rows(processed)
+
+    def _filter_rows(self, processed):
+        """
+        If a ts doesn't have enough history, then drop it.
+
+        Parameters
+        ----------
+        processed: (np.array,)
+
+        Returns
+        -------
+        (np.array,)
+        """
+        keep_rows = processed[-1] >= self.bcst_len + self.max_offset + self.fcst_len
+        pct_removed = 100*(1 - keep_rows.mean())
+        print(f"Filter stage removed {pct_removed:.04f}% of rows.")
+        filtered = [xs[keep_rows] for xs in processed]
+        return filtered
+
+    def __len__(self):
+        return self.ts.shape[0]
+
+    def __getitem__(self, index):
+        """
+        Parameters
+        ----------
+        index: int
+
+        Returns
+        -------
+        (x_tr, x_val, y_tr, y_val, series_id) if istrain else (x, series_id)
+        """
+        ts = self.ts[index]
+        series_id = self.series_id[index]
+        last_valid_idx = self.last_valid_idx[index]
+
+        # Spacing shown below.
+        #
+        #  |---------bcst_len----------|----offset----|--fcst_len--|
+        # fvi                                                     lvi
+        #
+        if self.istrain:
+            offset = np.random.randint(low=self.fcst_len, high=self.max_offset)
+            first_valid_idx = last_valid_idx - self.fcst_len - offset - self.bcst_len
+            ts_tr = ts[first_valid_idx:last_valid_idx]
+            x_tr = ts_tr[:self.bcst_len]
+            y_tr = ts_tr[self.bcst_len:self.bcst_len + self.fcst_len]
+
+            first_valid_idx = last_valid_idx - self.fcst_len - self.bcst_len
+            ts_val = ts[first_valid_idx:last_valid_idx]
+            x_val = ts_val[-(self.bcst_len + self.fcst_len):-self.fcst_len]
+            y_val = ts_val[-self.fcst_len:]
+            if self.debug_mode:
+                invalid = any((
+                    len(x_tr) != self.bcst_len,
+                    len(x_val) != self.bcst_len,
+                    len(y_tr) != self.fcst_len,
+                    len(y_val) != self.fcst_len,
+                    np.isnan(x_tr).any(),
+                    np.isnan(x_val).any(),
+                    np.isnan(y_tr).any(),
+                    np.isnan(y_val).any()
+                ))
+                if invalid:
+                    raise ValueError()
+            return x_tr, x_val, y_tr, y_val, series_id
+
+        first_valid_idx = last_valid_idx - self.bcst_len
+        ts = ts[first_valid_idx:last_valid_idx]
+        x = ts[-self.bcst_len:]
+        return x, series_id
+
 
 def plot_output(x, y, y_hat, num_plots):
     """
@@ -167,15 +269,17 @@ def train(data=None, interpretable=False):
 
     proc = process_data(data)
     fcst_len = 18
-    bcst_len = int(3*fcst_len)
+    bcst_len = int(5*fcst_len)
+    num_epochs = 1000000
 
-    batch_generator = generate_batches(
+    dataset = M4Dataset(
         processed=proc,
-        batch_size=1024,
         bcst_len=bcst_len,
         fcst_len=fcst_len,
-        num_iter=10000000000
+        lh=1.5
     )
+
+    num_seasonal_terms = fcst_len // 2
 
     device = "cuda"
     if interpretable:
@@ -183,8 +287,8 @@ def train(data=None, interpretable=False):
             device=device,
             bcst_len=bcst_len,
             fcst_len=fcst_len,
-            num_seasonal_terms=(fcst_len + bcst_len) // 2 - 1,
-            seasonal_period=1,
+            num_seasonal_terms=num_seasonal_terms,
+            seasonal_period=1
         )
     else:
         model = NBeatsGeneric(
@@ -200,40 +304,50 @@ def train(data=None, interpretable=False):
     running_loss = deque(maxlen=checkpoint_freq)
     running_mape_tr = deque(maxlen=checkpoint_freq)
     running_mape_val = deque(maxlen=checkpoint_freq)
-    for i, (x_tr, x_val, y_tr, y_val, _, _) in enumerate(batch_generator):
-        x_tr = torch.from_numpy(x_tr).float().to(device)
-        x_val = torch.from_numpy(x_val).float().to(device)
-        y_tr = torch.from_numpy(y_tr).float().to(device)
-        y_val = torch.from_numpy(y_val).float().to(device)
+    i = 0
+    for _ in range(num_epochs):
+        batch_generator = td.DataLoader(
+            dataset=dataset,
+            batch_size=1024,
+            shuffle=True,
+            num_workers=1,
+            drop_last=True
+        )
 
-        optimizer.zero_grad()
-        _, y_tr_hat = model(x_tr)
-        loss = l1_loss(y_tr, y_tr_hat)
-        loss.backward()
-        optimizer.step()
+        for x_tr, x_val, y_tr, y_val, _ in batch_generator:
+            x_tr = x_tr.float().to(device)
+            x_val = x_val.float().to(device)
+            y_tr = y_tr.float().to(device)
+            y_val = y_val.float().to(device)
 
-        with torch.no_grad():
-            running_loss.append(loss.mean().item())
+            optimizer.zero_grad()
+            _, y_tr_hat = model(x_tr)
+            loss = l1_loss(y_tr, y_tr_hat)
+            loss.backward()
+            optimizer.step()
 
-            mape_tr = compute_log_loss(y_tr, y_tr_hat)
-            running_mape_tr.append(mape_tr)
-            _, y_val_hat = model(x_val)
-
-            mape_val = compute_log_loss(y_val, y_val_hat)
-            running_mape_val.append(mape_val)
-
-        if i % checkpoint_freq == 0:
-            loss_check = np.mean(running_loss)
-            mape_tr_check = np.mean(running_mape_tr)
-            mape_val_check = np.mean(running_mape_val)
-            loss_msg = (
-                f"step: {i}  l1_loss: {loss_check:.2f}  "
-                f"mape_tr: {mape_tr_check:.4f}  "
-                f"mape_val: {mape_val_check:.4f}"
-            )
-            print(loss_msg)
             with torch.no_grad():
-                plot_output(x_val, y_val, y_val_hat, 15)
+                running_loss.append(loss.mean().item())
+
+                mape_tr = compute_log_loss(y_tr, y_tr_hat)
+                running_mape_tr.append(mape_tr)
+                _, y_val_hat = model(x_val)
+
+                mape_val = compute_log_loss(y_val, y_val_hat)
+                running_mape_val.append(mape_val)
+
+                if i % checkpoint_freq == 0:
+                    loss_check = np.mean(running_loss)
+                    mape_tr_check = np.mean(running_mape_tr)
+                    mape_val_check = np.mean(running_mape_val)
+                    loss_msg = (
+                        f"step: {i}  l1_loss: {loss_check:.2f}  "
+                        f"mape_tr: {mape_tr_check:.4f}  "
+                        f"mape_val: {mape_val_check:.4f}"
+                    )
+                    print(loss_msg)
+                    plot_output(x_val, y_val, y_val_hat, 15)
+            i += 1
 
 
 
